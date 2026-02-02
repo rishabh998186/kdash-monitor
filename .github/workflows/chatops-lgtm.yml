@@ -18,7 +18,7 @@ jobs:
 
       - name: Add LGTM label (issue or PR)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
         run: |
           set -e
           PAYLOAD='${{ toJson(github.event.client_payload) }}'

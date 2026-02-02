@@ -1,28 +1,40 @@
-name: ChatOps Lifecycle
-on:
-  repository_dispatch:
-    types: [close-command, reopen-command, lock-command, unlock-command]
-permissions:
-  issues: write
-  pull-requests: write
-jobs:
-  lifecycle:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install GitHub CLI
+      - name: Install GitHub CLI and jq
         run: sudo apt-get update && sudo apt-get install -y gh jq
 
-      - name: Handle Lifecycle
+      - name: Handle Lifecycle (issue or PR)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
         run: |
           PAYLOAD='${{ toJson(github.event.client_payload) }}'
           COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')
-          ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
+          NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
           REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
           case $COMMAND in
             close)
-              echo "Closing #$ISSUE_NUMBER"
+              echo "Closing #$NUMBER"
+              if echo "$PAYLOAD" | jq -e '.github.payload.pull_request' > /dev/null; then
+                gh pr close $NUMBER --repo $REPO
+              else
+                gh issue close $NUMBER --repo $REPO
+              fi
+              ;;
+            reopen)
+              echo "Reopening #$NUMBER"
+              if echo "$PAYLOAD" | jq -e '.github.payload.pull_request' > /dev/null; then
+                gh pr reopen $NUMBER --repo $REPO
+              else
+                gh issue reopen $NUMBER --repo $REPO
+              fi
+              ;;
+            lock)
+              echo "Locking #$NUMBER"
+              gh issue lock $NUMBER --repo $REPO
+              ;;
+            unlock)
+              echo "Unlocking #$NUMBER"
+              gh issue unlock $NUMBER --repo $REPO
+              ;;
+          esac
               gh issue close $ISSUE_NUMBER --repo $REPO
               ;;
             reopen)
