@@ -9,30 +9,58 @@ jobs:
   assign:
     runs-on: ubuntu-latest
     steps:
-      - name: Install GitHub CLI
-        run: sudo apt-get update && sudo apt-get install -y gh jq
-
       - name: Handle Assign/Unassign
-        env:
-          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
-        run: |
-          PAYLOAD='${{ toJson(github.event.client_payload) }}'
-          COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')
-          ARGS=$(echo "$PAYLOAD" | jq -r '.slash_command.args.all')
-          COMMENTER=$(echo "$PAYLOAD" | jq -r '.github.payload.comment.user.login')
-          USER="$ARGS"
-          if [ -z "$USER" ]; then
-            USER="$COMMENTER"
-          fi
-          USER=$(echo $USER | tr -d '@')
-          ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
-          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
-          if [ "$COMMAND" == "assign" ]; then
-            echo "Assigning $USER to #$ISSUE_NUMBER"
-            gh issue edit $ISSUE_NUMBER --repo $REPO --add-assignee $USER
-          elif [ "$COMMAND" == "unassign" ]; then
-            echo "Unassigning $USER from #$ISSUE_NUMBER"
-            gh issue edit $ISSUE_NUMBER --repo $REPO --remove-assignee $USER
-          fi
-
-
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = context.payload.client_payload;
+            const command = payload.slash_command.command;
+            const args = payload.slash_command.args.all.trim();
+            const commenter = payload.github.payload.comment.user.login;
+            const issueNumber = payload.github.payload.issue?.number || payload.github.payload.pull_request?.number;
+            
+            if (!issueNumber) {
+              core.setFailed('Could not determine issue/PR number');
+              return;
+            }
+            
+            // Determine who to assign (self if no args, otherwise the mentioned user)
+            let username = args ? args.replace('@', '') : commenter;
+            
+            try {
+              if (command === 'assign') {
+                await github.rest.issues.addAssignees({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  assignees: [username]
+                });
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `✅ Assigned to @${username}`
+                });
+                core.info(`Assigned @${username} to #${issueNumber}`);
+                
+              } else if (command === 'unassign') {
+                await github.rest.issues.removeAssignees({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  assignees: [username]
+                });
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `➖ Unassigned @${username}`
+                });
+                core.info(`Unassigned @${username} from #${issueNumber}`);
+              }
+            } catch (error) {
+              core.setFailed(`Failed to ${command}: ${error.message}`);
+              throw error;
+            }

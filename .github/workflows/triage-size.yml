@@ -9,21 +9,62 @@ jobs:
   size-label:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Calculate Size
-      env:
-        GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-      run: |
-        ADDITIONS=${{ github.event.pull_request.additions }}
-        DELETIONS=${{ github.event.pull_request.deletions }}
-        TOTAL=$((ADDITIONS + DELETIONS))
-        echo "Total changes: $TOTAL"
-        
-        if [ "$TOTAL" -lt 10 ]; then SIZE="size/XS"
-        elif [ "$TOTAL" -lt 50 ]; then SIZE="size/S"
-        elif [ "$TOTAL" -lt 200 ]; then SIZE="size/M"
-        else SIZE="size/L"; fi
-        
-        gh pr edit "$PR_NUMBER" --remove-label "size/XS" "size/S" "size/M" "size/L"
-        gh pr edit "$PR_NUMBER" --add-label "$SIZE"
+    - name: Calculate and Apply Size Label
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const additions = context.payload.pull_request.additions;
+          const deletions = context.payload.pull_request.deletions;
+          const total = additions + deletions;
+          
+          console.log(`Total changes: ${total} (additions: ${additions}, deletions: ${deletions})`);
+          
+          // Determine size
+          let size;
+          if (total < 10) size = 'size/XS';
+          else if (total < 50) size = 'size/S';
+          else if (total < 200) size = 'size/M';
+          else if (total < 500) size = 'size/L';
+          else size = 'size/XL';
+          
+          const prNumber = context.payload.pull_request.number;
+          const allSizeLabels = ['size/XS', 'size/S', 'size/M', 'size/L', 'size/XL'];
+          
+          // Get current labels
+          const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber
+          });
+          
+          // Remove old size labels
+          for (const label of currentLabels) {
+            if (allSizeLabels.includes(label.name) && label.name !== size) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  name: label.name
+                });
+                console.log(`Removed label: ${label.name}`);
+              } catch (error) {
+                console.log(`Could not remove label ${label.name}: ${error.message}`);
+              }
+            }
+          }
+          
+          // Add new size label if not already present
+          const hasLabel = currentLabels.some(label => label.name === size);
+          if (!hasLabel) {
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              labels: [size]
+            });
+            console.log(`Added label: ${size}`);
+          } else {
+            console.log(`Label ${size} already present`);
+          }
+

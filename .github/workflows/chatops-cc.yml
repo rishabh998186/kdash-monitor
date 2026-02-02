@@ -3,31 +3,84 @@ on:
   repository_dispatch:
     types: [cc-command, uncc-command]
 permissions:
-  issues: write
   pull-requests: write
+  issues: write
 jobs:
   cc:
     runs-on: ubuntu-latest
     steps:
-      - name: Install GitHub CLI
-        run: sudo apt-get update && sudo apt-get install -y gh jq
-
-      - name: Handle CC
-        env:
-          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
-        run: |
-          PAYLOAD='${{ toJson(github.event.client_payload) }}'
-          COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')
-          ARGS=$(echo "$PAYLOAD" | jq -r '.slash_command.args.all')
-          USER=$(echo $ARGS | tr -d '@')
-          ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
-          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
-          if [ "$COMMAND" == "cc" ]; then
-            echo "Requesting review from $USER"
-            gh pr review-request $ISSUE_NUMBER --repo $REPO --add-reviewer $USER
-          elif [ "$COMMAND" == "uncc" ]; then
-            echo "Removing review request for $USER"
-            gh pr review-request $ISSUE_NUMBER --repo $REPO --remove-reviewer $USER
-          fi
-
-
+      - name: Handle Review Request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = context.payload.client_payload;
+            const command = payload.slash_command.command;
+            const args = payload.slash_command.args.all.trim();
+            const issueNumber = payload.github.payload.issue?.number || payload.github.payload.pull_request?.number;
+            const isPR = !!payload.github.payload.pull_request;
+            
+            if (!issueNumber) {
+              core.setFailed('Could not determine issue/PR number');
+              return;
+            }
+            
+            if (!isPR) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: '⚠️ `/cc` command only works on pull requests, not issues.'
+              });
+              return;
+            }
+            
+            // Extract username (remove @ if present)
+            const username = args.replace('@', '');
+            
+            if (!username) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: '⚠️ Please specify a user to request review from. Example: `/cc @username`'
+              });
+              return;
+            }
+            
+            try {
+              if (command === 'cc') {
+                await github.rest.pulls.requestReviewers({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: issueNumber,
+                  reviewers: [username]
+                });
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `👀 Review requested from @${username}`
+                });
+                core.info(`Requested review from @${username} on PR #${issueNumber}`);
+                
+              } else if (command === 'uncc') {
+                await github.rest.pulls.removeRequestedReviewers({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: issueNumber,
+                  reviewers: [username]
+                });
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `➖ Review request removed for @${username}`
+                });
+                core.info(`Removed review request for @${username} on PR #${issueNumber}`);
+              }
+            } catch (error) {
+              core.setFailed(`Failed to ${command}: ${error.message}`);
+              throw error;
+            }
