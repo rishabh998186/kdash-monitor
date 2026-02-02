@@ -5,30 +5,35 @@ on:
 permissions:
   issues: write
   pull-requests: write
-  actions: write
 jobs:
   lgtm:
     runs-on: ubuntu-latest
     steps:
-      - name: Dump client payload
-        run: echo '${{ toJson(github.event.client_payload) }}'
-
-      - name: Install GitHub CLI
-        run: sudo apt-get update && sudo apt-get install -y gh
-
-      - name: Add LGTM label (issue or PR)
-        env:
-          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
-        run: |
-          set -e
-          PAYLOAD='${{ toJson(github.event.client_payload) }}'
-          NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
-          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
-          echo "Target: $REPO #$NUMBER"
-          if echo "$PAYLOAD" | jq -e '.github.payload.pull_request' > /dev/null; then
-            echo "Adding LGTM label to PR #$NUMBER"
-            gh pr edit "$NUMBER" --repo "$REPO" --add-label "lgtm" || echo "Failed to add label to PR"
-          else
-            echo "Adding LGTM label to Issue #$NUMBER"
-            gh issue edit "$NUMBER" --repo "$REPO" --add-label "lgtm" || echo "Failed to add label to Issue"
-          fi
+      - name: Add LGTM Label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = context.payload.client_payload;
+            const issueNumber = payload.github.payload.issue?.number || payload.github.payload.pull_request?.number;
+            const commenter = payload.github.payload.comment.user.login;
+            
+            if (!issueNumber) {
+              core.setFailed('Could not determine issue/PR number');
+              return;
+            }
+            
+            // Add lgtm label
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels: ['lgtm']
+            });
+            
+            // Add comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `👍 LGTM from @${commenter}`
+            });

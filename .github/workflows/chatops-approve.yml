@@ -9,15 +9,31 @@ jobs:
   approve:
     runs-on: ubuntu-latest
     steps:
-      - name: Install GitHub CLI
-        run: sudo apt-get update && sudo apt-get install -y gh jq
-
       - name: Add Approved Label
-        env:
-          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
-        run: |
-          PAYLOAD='${{ toJson(github.event.client_payload) }}'
-          ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
-          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
-          echo "Adding 'approved' label to #$ISSUE_NUMBER"
-          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "approved"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = context.payload.client_payload;
+            const issueNumber = payload.github.payload.issue?.number || payload.github.payload.pull_request?.number;
+            
+            if (!issueNumber) {
+              core.setFailed('Could not determine issue/PR number');
+              return;
+            }
+            
+            // Add approved label
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels: ['approved']
+            });
+            
+            // Add comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: '✅ Approved by @' + payload.github.payload.comment.user.login
+            });
+
