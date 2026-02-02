@@ -9,23 +9,27 @@ jobs:
   label:
     runs-on: ubuntu-latest
     steps:
+      - name: Install GitHub CLI
+        run: sudo apt-get update && sudo apt-get install -y gh jq
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Handle Labeling
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.client_payload.github.payload.issue.number }}
-          REPO: ${{ github.event.client_payload.github.payload.repository.full_name }}
-          COMMAND: ${{ github.event.client_payload.slash_command.command }}
-          ARGS: ${{ github.event.client_payload.slash_command.args.all }}
         run: |
-          LABEL=$ARGS
-          
+          PAYLOAD='${{ toJson(github.event.client_payload) }}'
+          COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')
+          ARGS=$(echo "$PAYLOAD" | jq -r '.slash_command.args.all')
+          LABEL="$ARGS"
+          ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
+          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
+
           # Validate label against .prowlabels.yaml
           if ! grep -q "$LABEL" .prowlabels.yaml; then
             echo "Label '$LABEL' is not in the allowed list."
-            gh issue comment $ISSUE_NUMBER --repo $REPO --body "❌ Label \`$LABEL\` is not a valid Prow label. Please check \`.prowlabels.yaml\` for the allowed list."
+            gh issue comment $ISSUE_NUMBER --repo $REPO --body "\u274c Label \`$LABEL\` is not a valid Prow label. Please check \`.prowlabels.yaml\` for the allowed list."
             exit 1
           fi
 

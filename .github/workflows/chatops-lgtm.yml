@@ -11,15 +11,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Dump client payload
-        env:
-          PAYLOAD: ${{ toJson(github.event.client_payload) }}
-        run: echo "$PAYLOAD"
+        run: echo '${{ toJson(github.event.client_payload) }}'
 
-      - name: Add LGTM label
+      - name: Install GitHub CLI
+        run: sudo apt-get update && sudo apt-get install -y gh
+
+      - name: Add LGTM label (issue or PR)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.client_payload.github.payload.issue.number }}
-          REPO: ${{ github.event.client_payload.github.payload.repository.full_name }}
         run: |
-          echo "Attempting to add label 'lgtm' to #$ISSUE_NUMBER"
-          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "lgtm" || echo "Failed to add label"
+          set -e
+          PAYLOAD='${{ toJson(github.event.client_payload) }}'
+          NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
+          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
+          echo "Target: $REPO #$NUMBER"
+          if echo "$PAYLOAD" | jq -e '.github.payload.pull_request' > /dev/null; then
+            echo "Adding LGTM label to PR #$NUMBER"
+            gh pr edit "$NUMBER" --repo "$REPO" --add-label "lgtm" || echo "Failed to add label to PR"
+          else
+            echo "Adding LGTM label to Issue #$NUMBER"
+            gh issue edit "$NUMBER" --repo "$REPO" --add-label "lgtm" || echo "Failed to add label to Issue"
+          fi

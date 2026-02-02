@@ -9,24 +9,24 @@ jobs:
   assign:
     runs-on: ubuntu-latest
     steps:
+      - name: Install GitHub CLI
+        run: sudo apt-get update && sudo apt-get install -y gh jq
+
       - name: Handle Assign/Unassign
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.client_payload.github.payload.issue.number }}
-          REPO: ${{ github.event.client_payload.github.payload.repository.full_name }}
-          COMMAND: ${{ github.event.client_payload.slash_command.command }}
-          ARGS: ${{ github.event.client_payload.slash_command.args.all }}
-          COMMENTER: ${{ github.event.client_payload.github.payload.comment.user.login }}
         run: |
-          # Determine user to action
-          USER=$ARGS
+          PAYLOAD='${{ toJson(github.event.client_payload) }}'
+          COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')
+          ARGS=$(echo "$PAYLOAD" | jq -r '.slash_command.args.all')
+          COMMENTER=$(echo "$PAYLOAD" | jq -r '.github.payload.comment.user.login')
+          USER="$ARGS"
           if [ -z "$USER" ]; then
-            USER=$COMMENTER
+            USER="$COMMENTER"
           fi
-          
-          # Strip '@' if present
           USER=$(echo $USER | tr -d '@')
-          
+          ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
+          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
           if [ "$COMMAND" == "assign" ]; then
             echo "Assigning $USER to #$ISSUE_NUMBER"
             gh issue edit $ISSUE_NUMBER --repo $REPO --add-assignee $USER

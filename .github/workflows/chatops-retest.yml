@@ -10,13 +10,17 @@ jobs:
   retest:
     runs-on: ubuntu-latest
     steps:
+      - name: Install GitHub CLI
+        run: sudo apt-get update && sudo apt-get install -y gh jq
+
       - name: Trigger Tests
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.event.client_payload.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.client_payload.github.payload.issue.number }}
-          REPO: ${{ github.event.client_payload.github.payload.repository.full_name }}
         run: |
+          PAYLOAD='${{ toJson(github.event.client_payload) }}'
+          SHA=$(echo "$PAYLOAD" | jq -r '.pull_request.head.sha // .github.payload.pull_request.head.sha')
+          PR_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
+          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
           echo "Triggering ci-tests for SHA: $SHA (PR #$PR_NUMBER)"
           gh workflow run ci-tests.yml --ref main -f sha=$SHA -R $REPO
 
