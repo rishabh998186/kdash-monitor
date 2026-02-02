@@ -17,7 +17,7 @@ jobs:
 
       - name: Handle Labeling
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
         run: |
           PAYLOAD='${{ toJson(github.event.client_payload) }}'
           COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')

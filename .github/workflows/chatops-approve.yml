@@ -14,7 +14,7 @@ jobs:
 
       - name: Add Approved Label
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
         run: |
           PAYLOAD='${{ toJson(github.event.client_payload) }}'
           ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
