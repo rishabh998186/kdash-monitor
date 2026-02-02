@@ -1,54 +1,102 @@
-      - name: Install GitHub CLI and jq
-        run: sudo apt-get update && sudo apt-get install -y gh jq
-
-      - name: Handle Lifecycle (issue or PR)
-        env:
-          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
-        run: |
-          PAYLOAD='${{ toJson(github.event.client_payload) }}'
-          COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')
-          NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
-          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
-          case $COMMAND in
-            close)
-              echo "Closing #$NUMBER"
-              if echo "$PAYLOAD" | jq -e '.github.payload.pull_request' > /dev/null; then
-                gh pr close $NUMBER --repo $REPO
-              else
-                gh issue close $NUMBER --repo $REPO
-              fi
-              ;;
-            reopen)
-              echo "Reopening #$NUMBER"
-              if echo "$PAYLOAD" | jq -e '.github.payload.pull_request' > /dev/null; then
-                gh pr reopen $NUMBER --repo $REPO
-              else
-                gh issue reopen $NUMBER --repo $REPO
-              fi
-              ;;
-            lock)
-              echo "Locking #$NUMBER"
-              gh issue lock $NUMBER --repo $REPO
-              ;;
-            unlock)
-              echo "Unlocking #$NUMBER"
-              gh issue unlock $NUMBER --repo $REPO
-              ;;
-          esac
-              gh issue close $ISSUE_NUMBER --repo $REPO
-              ;;
-            reopen)
-              echo "Reopening #$ISSUE_NUMBER"
-              gh issue reopen $ISSUE_NUMBER --repo $REPO
-              ;;
-            lock)
-              echo "Locking #$ISSUE_NUMBER"
-              gh issue lock $ISSUE_NUMBER --repo $REPO
-              ;;
-            unlock)
-              echo "Unlocking #$ISSUE_NUMBER"
-              gh issue unlock $ISSUE_NUMBER --repo $REPO
-              ;;
-          esac
-
-
+name: ChatOps Lifecycle
+on:
+  repository_dispatch:
+    types: [lifecycle-command]
+permissions:
+  issues: write
+  pull-requests: write
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Handle Lifecycle Commands
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = context.payload.client_payload;
+            const command = payload.slash_command.command;
+            const issueNumber = payload.github.payload.issue?.number || payload.github.payload.pull_request?.number;
+            const isPR = !!payload.github.payload.pull_request;
+            const commenter = payload.github.payload.comment.user.login;
+            
+            if (!issueNumber) {
+              core.setFailed('Could not determine issue/PR number');
+              return;
+            }
+            
+            try {
+              switch (command) {
+                case 'close':
+                  await github.rest.issues.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    state: 'closed'
+                  });
+                  
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    body: `🔒 Closed by @${commenter}`
+                  });
+                  core.info(`Closed ${isPR ? 'PR' : 'issue'} #${issueNumber}`);
+                  break;
+                  
+                case 'reopen':
+                  await github.rest.issues.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    state: 'open'
+                  });
+                  
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    body: `🔓 Reopened by @${commenter}`
+                  });
+                  core.info(`Reopened ${isPR ? 'PR' : 'issue'} #${issueNumber}`);
+                  break;
+                  
+                case 'lock':
+                  await github.rest.issues.lock({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    lock_reason: 'resolved'
+                  });
+                  
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    body: `🔐 Locked by @${commenter}`
+                  });
+                  core.info(`Locked ${isPR ? 'PR' : 'issue'} #${issueNumber}`);
+                  break;
+                  
+                case 'unlock':
+                  await github.rest.issues.unlock({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber
+                  });
+                  
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issueNumber,
+                    body: `🔓 Unlocked by @${commenter}`
+                  });
+                  core.info(`Unlocked ${isPR ? 'PR' : 'issue'} #${issueNumber}`);
+                  break;
+                  
+                default:
+                  core.setFailed(`Unknown lifecycle command: ${command}`);
+              }
+            } catch (error) {
+              core.setFailed(`Failed to execute ${command}: ${error.message}`);
+              throw error;
+            }

@@ -5,40 +5,63 @@ on:
 permissions:
   issues: write
   pull-requests: write
+  contents: read
 jobs:
   label:
     runs-on: ubuntu-latest
     steps:
-      - name: Install GitHub CLI
-        run: sudo apt-get update && sudo apt-get install -y gh jq
-
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Handle Labeling
-        env:
-          GH_TOKEN: ${{ secrets.CHATOPS_PAT }}
-        run: |
-          PAYLOAD='${{ toJson(github.event.client_payload) }}'
-          COMMAND=$(echo "$PAYLOAD" | jq -r '.slash_command.command')
-          ARGS=$(echo "$PAYLOAD" | jq -r '.slash_command.args.all')
-          LABEL="$ARGS"
-          ISSUE_NUMBER=$(echo "$PAYLOAD" | jq -r '.github.payload.issue.number // .github.payload.pull_request.number')
-          REPO=$(echo "$PAYLOAD" | jq -r '.github.payload.repository.full_name')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const yaml = require('js-yaml');
+            const payload = context.payload.client_payload;
+            const command = payload.slash_command.command;
+            const label = payload.slash_command.args.all.trim();
+            const issueNumber = payload.github.payload.issue?.number || payload.github.payload.pull_request?.number;
+            
+            if (!issueNumber) {
+              core.setFailed('Could not determine issue/PR number');
+              return;
+            }
+            
+            // Load and validate label
+            const prowLabels = yaml.load(fs.readFileSync('.prowlabels.yaml', 'utf8'));
+            const validLabels = prowLabels.labels || [];
+            
+            if (!validLabels.includes(label)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `❌ Label \`${label}\` is not in the allowed list. Please check \`.prowlabels.yaml\` for valid labels.`
+              });
+              core.setFailed(`Invalid label: ${label}`);
+              return;
+            }
+            
+            // Add or remove label
+            if (command === 'label') {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [label]
+              });
+              core.info(`Added label ${label} to #${issueNumber}`);
+            } else if (command === 'remove-label') {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                name: label
+              });
+              core.info(`Removed label ${label} from #${issueNumber}`);
+            }
 
-          # Validate label against .prowlabels.yaml
-          if ! grep -q "$LABEL" .prowlabels.yaml; then
-            echo "Label '$LABEL' is not in the allowed list."
-            gh issue comment $ISSUE_NUMBER --repo $REPO --body "\u274c Label \`$LABEL\` is not a valid Prow label. Please check \`.prowlabels.yaml\` for the allowed list."
-            exit 1
-          fi
-
-          if [ "$COMMAND" == "label" ]; then
-            echo "Adding label $LABEL to #$ISSUE_NUMBER"
-            gh issue edit $ISSUE_NUMBER --repo $REPO --add-label "$LABEL"
-          elif [ "$COMMAND" == "remove-label" ]; then
-            echo "Removing label $LABEL from #$ISSUE_NUMBER"
-            gh issue edit $ISSUE_NUMBER --repo $REPO --remove-label "$LABEL"
-          fi
 
 

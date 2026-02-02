@@ -1,0 +1,106 @@
+name: ChatOps Dispatcher
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  dispatch:
+    # Only run on PR comments
+    if: github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse Command
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment.body.trim();
+            const commandRegex = /^\/([a-z-]+)(?:\s+(.+))?$/;
+            const match = comment.match(commandRegex);
+            
+            if (!match) {
+              return { valid: false };
+            }
+            
+            const command = match[1];
+            const args = match[2] || '';
+            
+            // Map of supported commands to their dispatch types
+            const commandMap = {
+              'approve': 'approve-command',
+              'lgtm': 'lgtm-command',
+              'hold': 'hold-command',
+              'unhold': 'unhold-command',
+              'label': 'label-command',
+              'remove-label': 'remove-label-command',
+              'assign': 'assign-command',
+              'unassign': 'unassign-command',
+              'cc': 'cc-command',
+              'uncc': 'uncc-command',
+              'retest': 'retest-command',
+              'close': 'lifecycle-command',
+              'reopen': 'lifecycle-command',
+              'help': 'help-command'
+            };
+            
+            const dispatchType = commandMap[command];
+            if (!dispatchType) {
+              core.setOutput('valid', 'false');
+              core.setOutput('command', command);
+              return;
+            }
+            
+            core.setOutput('valid', 'true');
+            core.setOutput('command', command);
+            core.setOutput('dispatch_type', dispatchType);
+            core.setOutput('args', args);
+
+      - name: Dispatch Command
+        if: steps.parse.outputs.valid == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event_type: '${{ steps.parse.outputs.dispatch_type }}',
+              client_payload: {
+                github: context,
+                slash_command: {
+                  command: '${{ steps.parse.outputs.command }}',
+                  args: {
+                    all: '${{ steps.parse.outputs.args }}'
+                  }
+                }
+              }
+            });
+
+      - name: React to Comment
+        if: steps.parse.outputs.valid == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            });
+
+      - name: Unknown Command
+        if: steps.parse.outputs.valid == 'false' && steps.parse.outputs.command != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `❌ Unknown command: \`/${{ steps.parse.outputs.command }}\`\n\nType \`/help\` to see available commands.`
+            });
